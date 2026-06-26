@@ -1,0 +1,40 @@
+name: Discord Experiment Watcher
+
+on:
+  schedule:
+    # 1時間ごとに実行 (毎時0分)
+    - cron: '0 * * * *'
+  workflow_dispatch: # 手動でいつでも実行できるようにするボタンを追加
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install dependencies
+      run: npm install
+
+    - name: Run watcher script
+      env:
+        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      run: node index.js
+
+    - name: Commit and Push changes
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add last_experiments.json
+        if ! git diff --cached --quiet; then
+          git commit -m "Update: last_experiments.json"
+          git push
+        else
+          echo "No changes to commit"
+        fi
