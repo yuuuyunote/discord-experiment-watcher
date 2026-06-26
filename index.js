@@ -43,7 +43,7 @@ async function main() {
                 }]
             };
 
-            await axios.post(WEBHOOK_URL, message);
+            //await axios.post(WEBHOOK_URL, message);
             console.log("Discordへの通知が完了しました。");
         } else {
             console.log("新しい実験機能はありませんでした。");
