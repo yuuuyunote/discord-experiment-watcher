@@ -1,10 +1,9 @@
-name: Discord Experiment Watcher
+name: Discord Experiments Watcher
 
 on:
   schedule:
-    # 1時間ごとに実行 (毎時0分)
-    - cron: '0 * * * *'
-  workflow_dispatch: # 手動でいつでも実行できるようにするボタンを追加
+    - cron: '*/30 * * * *' # 30分ごとに自動実行
+  workflow_dispatch: # 手動実行用ボタンを有効化
 
 jobs:
   watch:
@@ -14,27 +13,25 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Setup Node.js
+    - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
         node-version: '20'
 
     - name: Install dependencies
-      run: npm install
+      run: |
+        npm install axios
 
-    - name: Run watcher script
+    # ======= 【今だけ一時的に書き換えているエリア】 =======
+    # プログラムを実行せず、直接ファイルを最新状態に強制同期します
+    - name: Force Sync Experiments
       env:
         DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-      run: node index.js
-
-    - name: Commit and Push changes
       run: |
+        curl -s https://raw.githubusercontent.com/xHyroM/discord-datamining/master/data/client/experiments/experiments.json | grep -oE '[0-9]{4}-[0-9]{2}_[a-zA-Z0-9_]+' | sort -u | jq -R . | jq -s . > last_experiments.json
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         git add last_experiments.json
-        if ! git diff --cached --quiet; then
-          git commit -m "Update: last_experiments.json"
-          git push
-        else
-          echo "No changes to commit"
-        fi
+        git commit -m "chore: force sync experiments list" || exit 0
+        git push
+    # ====================================================
