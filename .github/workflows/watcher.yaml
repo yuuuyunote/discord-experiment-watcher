@@ -1,0 +1,41 @@
+name: Check Discord Datamining Commits
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+# Gitプッシュの権限を付与
+permissions:
+  contents: write
+
+jobs:
+  check-and-notify:
+    runs-on: ubuntu-latest
+    steps:
+    - name: リポジトリのチェックアウト
+      uses: actions/checkout@v4
+      
+    - name: Node.js のセットアップ
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        
+    - name: スクリプトの実行（Discordへの通知）
+      env:
+        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      run: node index.js
+      
+    - name: 状態の保存（last_sha.txt の変更があればコミット＆プッシュ）
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        git add last_sha.txt
+        
+        # 変更がある場合のみプッシュする（[skip ci]を付けて無限ループを防止）
+        if ! git diff --staged --quiet; then
+          git commit -m "chore: update last_sha.txt [skip ci]"
+          git push
+        else
+          echo "変更がないため、プッシュをスキップします。"
+        fi
