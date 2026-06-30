@@ -3,7 +3,7 @@ const path = require('path');
 
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 const REPO = 'Discord-Datamining/Discord-Datamining';
-const CACHE_FILE = path.join(__dirname, 'last_commit_date.txt');
+const STATE_FILE = path.join(__dirname, 'last_sha.txt');
 
 async function main() {
   if (!DISCORD_WEBHOOK_URL) {
@@ -11,70 +11,80 @@ async function main() {
     process.exit(1);
   }
 
-  let since = "";
-  if (fs.existsSync(CACHE_FILE)) {
-    since = fs.readFileSync(CACHE_FILE, 'utf8').trim();
+  // 前回チェックしたコミットのSHAを読み込む
+  let lastSha = "";
+  if (fs.existsSync(STATE_FILE)) {
+    lastSha = fs.readFileSync(STATE_FILE, 'utf8').trim();
   }
 
-  let url = `https://api.github.com/repos/${REPO}/commits?sha=master&per_page=10`; // 直近10件を取得
-  if (since) {
-    url += `&since=${since}`;
-  }
-
-  console.log(`APIリクエスト送信中... (前回記憶日時: ${since || 'なし'})`);
-
+  const url = `https://api.github.com/repos/${REPO}/commits?sha=master`;
+  
   try {
-    const response = await fetch(url, {
-      headers: { 'User-Agent': 'Github-Actions-Discord-Bot' }
-    });
-
+    const response = await fetch(url, { headers: { 'User-Agent': 'Github-Actions-Discord-Bot' } });
     if (!response.ok) throw new Error(`GitHub API エラー: ${response.statusText}`);
 
     const commits = await response.json();
-    if (!Array.isArray(commits) || commits.length === 0) {
-      console.log("新しいコミットはありませんでした。");
-      return;
+    if (!Array.isArray(commits) || commits.length === 0) return;
+
+    // 最新のコミットSHAを保持しておく
+    const latestSha = commits[0].sha;
+
+    let newCommits = [];
+    if (!lastSha) {
+        // 初回実行時は、通知せずに最新SHAだけを記録して終了する（過去の大量通知を防ぐため）
+        console.log("初回実行（last_sha.txtが存在しない）のため、最新のSHAを保存して終了します。");
+        fs.writeFileSync(STATE_FILE, latestSha, 'utf8');
+        return;
     }
 
-    const sortedCommits = commits.reverse();
-    let latestCommitDate = since;
+    const lastShaIndex = commits.findIndex(c => c.sha === lastSha);
 
-    for (const item of sortedCommits) {
-      const commitMessage = item.commit.message.trim();
+    if (lastShaIndex === -1) {
+        // 前回記録したSHAが見つからない場合（長期間実行されず30件以上コミットされた等）
+        console.warn("前回のコミットが直近のリストに見つかりませんでした。取得できたものを処理します。");
+        newCommits = commits;
+    } else {
+        // 前回処理したSHAより「前（新しい）」コミットを抽出
+        newCommits = commits.slice(0, lastShaIndex);
+    }
+
+    // 古い順に処理してDiscordへ送信するためにリバース
+    newCommits.reverse();
+
+    for (const item of newCommits) {
+      const commitMessage = item.commit.message;
       const commitUrl = item.html_url;
-      const commitDate = item.commit.committer.date;
-
-      if (commitDate === since) continue;
-
-      // 【判定条件の強化】
-      // 条件①: 改行が含まれている
-      // 条件②: または、1行しかなくても文字数が50文字以上（長文コメント）である
-      if (commitMessage.includes('\n') || commitMessage.length > 50) {
-        console.log(`条件一致コミットを発見: ${item.sha.substring(0, 7)}`);
-        
-        const payload = {
-          content: `【Discord-Datamining 新着ログ】\n${commitMessage}\n\nURL: ${commitUrl}`
+      
+      // 【改行判定】改行コードで分割し、空白のみの行を除外
+      const lines = commitMessage.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0);
+      
+      // 実質的な行数が2行以上（タイトル + 詳細コメント）あれば通知する
+      if (lines.length > 1) {
+        const payload = { 
+            content: `【Discord-Datamining 新着ログ】\n\`\`\`text\n${commitMessage}\n\`\`\`\nURL: ${commitUrl}` 
         };
-
+        
         await fetch(DISCORD_WEBHOOK_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // APIレートリミット（Discord側）に引っかからないよう2秒待機
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
-
-      latestCommitDate = commitDate;
     }
 
-    if (latestCommitDate && latestCommitDate !== since) {
-      fs.writeFileSync(CACHE_FILE, latestCommitDate, 'utf8');
-      console.log(`キャッシュを更新しました: ${latestCommitDate}`);
+    // 処理が完了したら、新しいSHAをテキストファイルに書き込む
+    if (latestSha !== lastSha) {
+      fs.writeFileSync(STATE_FILE, latestSha, 'utf8');
+      console.log(`last_sha.txt を更新しました: ${latestSha}`);
+    } else {
+      console.log("新しいコミットはありませんでした。");
     }
 
   } catch (error) {
-    console.error("エラーが発生しました:", error);
+    console.error("予期せぬエラーが発生しました:", error);
     process.exit(1);
   }
 }
